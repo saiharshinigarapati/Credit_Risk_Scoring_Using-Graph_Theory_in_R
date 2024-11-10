@@ -1,0 +1,730 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+plot(cars)
+```
+```{r}
+# Install packages for data manipulation and visualization
+install.packages("bit",lib="~/R/library")
+```
+
+
+```{r}
+install.packages("tidyverse")
+install.packages("data.table")
+install.packages("ggplot2")
+
+# Install packages for text data handling and NLP
+install.packages("text")
+install.packages("tm")
+install.packages("quanteda")
+
+# Install packages for working with graphs
+install.packages("igraph")
+install.packages("ggraph")
+
+# Install package for similarity measures
+install.packages("proxy")
+
+# For running Python code in R (if needed)
+install.packages("reticulate")
+
+```
+```{r}
+library(data.table)
+```
+
+
+```{r}
+rating_df<-fread("C:/Users/saihg/Downloads/datasets/tabular_data.csv")
+rating_df[,binary_rating := ifelse(Rating %in% c("AAA","AA","A","BBB"),1,0)]
+rating_df[,Rating :=as.numeric(factor(Rating))-1]
+head(rating_df)
+```
+```{r}
+library(dplyr)
+rating_df<-rating_df %>% select(-Rating)
+target_column<-"binary_rating"
+```
+
+
+```{r}
+mean_value<-mean(rating_df[[target_column]])
+mean_value
+```
+
+```{r}
+file_list<-list.files(path="C:\\Users\\saihg\\OneDrive\\Desktop\\datasets",pattern = "dataset_.*\\.csv",full.names=TRUE)
+dfs<- lapply(file_list,fread)
+print(file_list)
+```
+
+
+```{r}
+text_df<-bind_rows(dfs)
+
+```
+
+```{r}
+library(Matrix)
+library(proxy)
+```
+
+
+```{r}
+library(igraph)
+```
+
+```{r}
+
+
+embedding_matrix <- as.matrix(read.csv("C:\\Users\\saihg\\OneDrive\\Desktop\\datasets\\embed_matrix.csv", header = FALSE))
+
+```
+
+
+```{r} 
+```
+
+
+```{r}
+similars<- simil(embedding_matrix,method="cosine")
+similars <- as.matrix(similars)
+```
+
+
+```{r}
+is.matrix(similars)  # Should return TRUE
+dim(similars)        # Should return two values: number of rows and columns
+
+```
+
+
+```{r}
+diag(similars)<-0
+print('done')
+```
+
+
+```{r}
+```
+
+```{r}
+n_nodes<-nrow(embedding_matrix)
+
+similarity_values<-as.vector(similars)
+n_links<-sum(similarity_values>0.5)/2
+
+cat("Number of nodes =", n_nodes, "\n")
+cat("Min of cosine similarities =", min(similarity_values), "\n")
+cat("Mean of cosine similarities =", mean(similarity_values), "\n")
+cat("Median of cosine similarities =", median(similarity_values), "\n")
+cat("Number of links (symmetric) =", n_links, "\n")
+cat("Average degree =", 2 * n_links / n_nodes, "\n")
+
+```
+
+```{r}
+# Initialize empty vectors for source and destination nodes
+src <- c()
+dst <- c()
+
+# Loop to create the edges based on the cutoff
+cutoff <- 0.5
+for (i in 1:n_nodes) {
+  for (j in 1:n_nodes) {
+    if (similars[i, j] > cutoff) {
+      src <- c(src, i - 1)  # R is 1-indexed, so subtract 1 for 0-indexing
+      dst <- c(dst, j - 1)
+    }
+  }
+}
+
+cat("Check: number of links =", length(src), "\n")
+
+# Create a list for the source and destination nodes
+src_dst_dict <- list(src = src, dst = dst)
+
+```
+```{r}
+graph<- graph_from_data_frame(data.frame(src,dst),directed=FALSE)
+
+```
+
+```{r}
+# Compute the set of nodes to delete (nodes that are isolated)
+del_nodes <- setdiff(1:nrow(rating_df), unique(c(src_dst_dict$src, src_dst_dict$dst)))
+
+# Drop isolated nodes from the DataFrame
+rating_df <- rating_df[-del_nodes, ]
+
+# Create a new 'node' column with the current row numbers
+rating_df$node <- 1:nrow(rating_df)
+
+# Reset the indices in the source and destination lists to match the new row numbers
+node_map <- setNames(1:nrow(rating_df), rating_df$node)
+
+src_dst_dict$src <- sapply(src_dst_dict$src, function(n) node_map[n])
+src_dst_dict$dst <- sapply(src_dst_dict$dst, function(n) node_map[n])
+
+# Check and print statistics
+cat("Highest index =", max(1:nrow(rating_df)), "\n")
+cat("# nodes =", nrow(rating_df), "\n")
+cat("# source nodes with links =", length(unique(src_dst_dict$src)), "\n")
+cat("# destination nodes with links =", length(unique(src_dst_dict$dst)), "\n")
+cat("# Linked nodes =", length(unique(c(src_dst_dict$src, src_dst_dict$dst))), "\n")
+cat("# isolated nodes =", nrow(rating_df) - length(unique(c(src_dst_dict$src, src_dst_dict$dst))), "\n")
+
+
+```
+
+
+
+```{r}
+library(caret)
+set.seed(46)  # For reproducibility
+
+# Create a train-test split
+train_index <- createDataPartition(rating_df$binary_rating, p = 0.8, list = FALSE)
+train_df <- rating_df[train_index, ]
+test_df <- rating_df[-train_index, ]
+
+# Check the dimensions of the split data
+dim(train_df)  # Should be approximately (2628, 10)
+dim(test_df)   # Should be approximately (657, 10)
+
+
+```
+
+
+```{r}
+# Remove the "node" column from the train and test data
+ag_train_df <- subset(train_df, select = -node)
+ag_test_df <- subset(test_df, select = -node)
+
+# Create the directory to save processed data
+if (!dir.exists("ag_processed_data")) {
+  dir.create("ag_processed_data")
+}
+
+# Save the train and test datasets to CSV files
+write.csv(ag_train_df, "ag_processed_data/train_data.csv", row.names = FALSE)
+write.csv(ag_test_df, "ag_processed_data/test_data.csv", row.names = FALSE)
+
+```
+
+
+```{r}
+# Load the necessary libraries
+library(h2o)
+
+# Initialize H2O
+h2o.init()
+
+# Load the train and test data
+train_data <- h2o.importFile("ag_processed_data/train_data.csv")
+test_data <- h2o.importFile("ag_processed_data/test_data.csv")
+
+# Specify the target and features
+target_column <- "binary_rating"
+feature_columns <- setdiff(names(train_data), target_column)
+
+# Run H2O AutoML
+automl_model <- h2o.automl(
+  x = feature_columns,
+  y = target_column,
+  training_frame = train_data,
+  max_models = 20,            # Limit the number of models trained
+  seed = 46,
+  balance_classes = TRUE,     # Handle class imbalance if necessary
+  stopping_metric = "auto"      # Use F1 score as the stopping metric
+)
+```
+
+
+```{r}
+# Output information about the best model
+best_model <- automl_model@leader
+cat("Best model ID: ", best_model@model_id, "\n")
+
+# Generate and display the leaderboard
+lb <- automl_model@leaderboard
+print(lb)
+
+
+# Save the leaderboard to a CSV file
+h2o.exportFile(lb, path = "C:\\Users\\saihg\\OneDrive\\Desktop\\ag-results\\ leaderboard.csv", force = TRUE)
+
+```
+```{r}
+# Save the best model
+model_path <- h2o.saveModel(object = best_model, path = "C:/Users/saihg/OneDrive/Desktop/ag-results", force = TRUE)
+cat("Model saved at: ", model_path, "\n")
+
+```
+
+
+```{r}
+
+library(yardstick)
+```
+
+```{r}
+# Initialize H2O
+h2o.init()
+
+# Load the model (replace `model_path` with the actual path to your saved model)
+model <- h2o.loadModel("C:/Users/saihg/OneDrive/Desktop/ag-results/GLM_1_AutoML_1_20241109_103044 ")
+
+# Load test data
+test_data <- h2o.importFile("ag_processed_data/test_data.csv")
+
+# Get predictions and probabilities from the model
+```
+
+```{r}
+predictions <- h2o.predict(best_model, test_data)
+print(predictions)  # Check the output columns
+
+```
+
+
+```{r}
+predictions <- h2o.predict(model, test_data)
+pred_prob <- as.data.frame(predictions[ , "predict"])  # Probability for class 1
+pred_class <- as.vector(ifelse(pred_prob > 0.5, 1, 0))  # Convert to binary predictions
+
+```
+
+```{r}
+# Convert true labels to factors
+true_labels <- as.factor(as.vector(test_data$binary_rating))
+
+# F1 Score
+```
+
+
+```{r}
+
+# Ensure `pred_prob` is numeric
+pred_prob <- unlist(pred_prob)  # Flatten the list to a vector if needed
+pred_prob <- as.numeric(pred_prob)  # Convert to numeric format
+
+# Calculate ROC AUC
+roc_auc <- roc_auc_vec(true_labels, pred_prob)
+print(roc_auc)
+```
+
+
+```{r}
+f1 <- f_meas_vec(true_labels, as.factor(pred_class), event_level = "second")
+
+
+
+```
+
+
+```{r}
+# Accuracy
+accuracy <- accuracy_vec(true_labels, as.factor(pred_class))
+
+# Matthews Correlation Coefficient (MCC)
+mcc <- mcc_vec(true_labels, as.factor(pred_class))
+
+# Balanced Accuracy
+balanced_accuracy <- bal_accuracy_vec(true_labels, as.factor(pred_class))
+
+# Precision and Recall
+precision <- precision_vec(true_labels, as.factor(pred_class), event_level = "second")
+recall <- recall_vec(true_labels, as.factor(pred_class), event_level = "second")
+
+# Compile results into a data frame
+ag_results <- data.frame(
+    "F1 Score" = f1,
+    "ROC AUC" = roc_auc,
+    "Accuracy" = accuracy,
+    "MCC" = mcc,
+    "Balanced Accuracy" = balanced_accuracy,
+    "Precision" = precision,
+    "Recall" = recall,
+    row.names = "H2O_Model"
+)
+
+# Print results
+print(ag_results)
+
+```
+
+```{r}
+# Load the data
+src_dst_df <- as.data.table(src_dst_dict)
+print(dim(src_dst_df))  
+```
+
+```{r}
+# Specify columns for normalization and encoding
+col_to_normalization <- c("CurrentLiabs", "TotalLiabs", "RetainedEarnings", 
+                          "CurrentAssets", "NetSales", "MktValueEquity")
+col_to_onehot_encoded <- "industry_code"
+
+```
+
+```{r}
+print(names(src_dst_df))
+# Check columns in train_df and test_df to confirm they contain col_to_normalization columns
+print(names(train_df))
+print(names(test_df))
+
+
+```
+
+```{r}
+
+
+# Ensure train_df and test_df are data.tables
+train_df <- as.data.table(train_df)
+test_df <- as.data.table(test_df)
+src_dst_df <- as.data.table(src_dst_df)  # Assuming src_dst_df needs processing as well
+
+# Specify columns to normalize
+col_to_normalization <- c("CurrentLiabs", "TotalLiabs", "RetainedEarnings", 
+                          "CurrentAssets", "NetSales", "MktValueEquity")
+
+# Normalize columns in train_df
+scaler <- preProcess(train_df[, ..col_to_normalization], method = c("center", "scale"))
+train_df[, (col_to_normalization) := predict(scaler, train_df[, ..col_to_normalization])]
+
+# Normalize columns in test_df using the same scaler
+test_df[, (col_to_normalization) := predict(scaler, test_df[, ..col_to_normalization])]
+
+# If src_dst_df needs normalization on col_to_normalization, ensure columns are present
+if (all(col_to_normalization %in% colnames(src_dst_df))) {
+  src_dst_df[, (col_to_normalization) := predict(scaler, src_dst_df[, ..col_to_normalization])]
+}
+
+# One-hot encode the 'industry_code' column in train_df and test_df
+if ("industry_code" %in% colnames(train_df)) {
+  dummies <- dummyVars(~ industry_code, data = train_df)
+  one_hot_train <- as.data.table(predict(dummies, newdata = train_df))
+  train_df <- cbind(train_df, one_hot_train)
+  train_df[, industry_code := NULL]  # Remove original column if needed
+}
+
+if ("industry_code" %in% colnames(test_df)) {
+  one_hot_test <- as.data.table(predict(dummies, newdata = test_df))
+  test_df <- cbind(test_df, one_hot_test)
+  test_df[, industry_code := NULL]  # Remove original column if needed
+}
+
+# Apply one-hot encoding to industry_code in src_dst_df if present
+if ("industry_code" %in% colnames(src_dst_df)) {
+  dummies_src <- dummyVars(~ industry_code, data = src_dst_df)
+  one_hot_src <- as.data.table(predict(dummies_src, newdata = src_dst_df))
+  src_dst_df <- cbind(src_dst_df, one_hot_src)
+  src_dst_df[, industry_code := NULL]  # Remove original column if needed
+}
+
+# Verify results
+print(head(train_df))
+print(head(test_df))
+print(head(src_dst_df))
+
+
+```
+
+
+```{r}
+# Create the directory for processed data
+dir.create("gcn_processed_data", showWarnings = FALSE)
+
+# Save the data frames to CSV files
+fwrite(src_dst_df, "gcn_processed_data/src_dst_df.csv", col.names = TRUE, row.names = FALSE)
+fwrite(train_df, "gcn_processed_data/features_train.csv", col.names = TRUE, row.names = TRUE)
+fwrite(test_df, "gcn_processed_data/features_test.csv", col.names = TRUE, row.names = TRUE)
+
+```
+
+
+```{r}
+install.packages("reticulate")
+```
+
+
+```{r}
+
+```
+
+
+```{r}
+
+```
+
+
+```{r}
+
+
+
+```
+
+
+```{python}
+library(reticulate)
+
+# Create or specify the virtual environment (skip if already created)
+reticulate::virtualenv_create("r_dgl_env123")
+
+# Install the required packages in the specified virtual environment
+reticulate::virtualenv_install(
+  envname = "r_dgl_env123", 
+  packages = c("pydantic", "PyYAML", "numpy==1.26.4", "torch==2.2.0", "torchvision==0.17.0", "torchaudio==2.2.0")
+)
+
+# Install DGL from a custom URL
+reticulate::virtualenv_install(
+  envname = "r_dgl_env123", 
+  packages = "dgl", 
+  ignore_installed = TRUE,
+  pip_options = "-f https://data.dgl.ai/wheels/repo.html"
+)
+
+```
+
+
+```{r}
+# Define Python code as a string
+python_code <- "
+import torch
+import dgl
+import torch.nn as nn
+import torch.optim as optim
+from dgl.nn import GraphConv
+
+# Hyperparameters
+hyperparameters = {
+    'n_hidden': 32,
+    'n_layers': 2,
+    'dropout': 0.0,
+    'weight_decay': 0.000294,
+    'n_epochs': 119,
+    'lr': 0.02,
+    'aggregator_type': 'pool'
+}
+
+# Define your model and training procedure here, using DGL and PyTorch
+# ...
+print('Python code for model training would go here.')
+"
+
+# Execute the Python code
+py_run_string(python_code)
+
+```
+
+
+
+
+
+```{python}
+import os
+import pandas as pd
+from gcn_local.train_dgl_pytorch_entry_point_local import entry_train
+from sklearn.metrics import classification_report, roc_auc_score, matthews_corrcoef, balanced_accuracy_score
+
+# Create a results directory if it doesn't exist
+os.makedirs('gcn_results', exist_ok=True)
+
+# Hyperparameters for training
+hyperparameters = {
+    'n_hidden': 32,
+    'n_layers': 2,
+    'dropout': 0.0,
+    'weight_decay': 0.000294,
+    'n_epochs': 119,
+    'lr': 0.02,
+    'aggregator_type': 'pool'
+}
+
+# Set up empty DataFrame to store all GCN results
+gcn_results_all = pd.DataFrame(columns=['F1 Score', 'ROC AUC', 'Accuracy', 'MCC', 'Balanced Accuracy', 'Precision', 'Recall'])
+
+# Training loop
+for j in range(10):
+    entry_train(
+        training_dir='gcn_processed_data',
+        model_dir='gcn_results',
+        output_dir='gcn_results',
+        features_train='features_train.csv',
+        features_test='features_test.csv',
+        target_column='binary_rating',
+        source_destination_node_index='src_dst_df.csv',
+        n_hidden=hyperparameters['n_hidden'],
+        n_layers=hyperparameters['n_layers'],
+        dropout=hyperparameters['dropout'],
+        weight_decay=hyperparameters['weight_decay'],
+        n_epochs=hyperparameters['n_epochs'],
+        lr=hyperparameters['lr'],
+        aggregator_type=hyperparameters['aggregator_type'],
+        predictions_file_name='predictions.csv'
+    )
+    
+    # Load predictions and compute metrics
+    gcn_output = pd.read_csv(os.path.join('gcn_results', 'predictions.csv'))
+    y_true, gcn_y_pred, gcn_y_pred_prob_class_1 = gcn_output['target'], gcn_output['pred'], gcn_output['pred_proba_class_1']
+    metrics_gcn_results = classification_report(y_true, gcn_y_pred, zero_division=1, output_dict=True)
+    
+    gcn_results = pd.DataFrame({
+        'F1 Score': metrics_gcn_results['1']['f1-score'],
+        'ROC AUC': roc_auc_score(y_true, gcn_y_pred_prob_class_1),
+        'Accuracy': metrics_gcn_results['accuracy'],
+        'MCC': matthews_corrcoef(y_true, gcn_y_pred),
+        'Balanced Accuracy': balanced_accuracy_score(y_true, gcn_y_pred),
+        'Precision': metrics_gcn_results['1']['precision'],
+        'Recall': metrics_gcn_results['1']['recall'],
+    }, index=['GCN No HPO'])
+    
+    gcn_results_all = pd.concat([gcn_results_all, gcn_results])
+
+
+```
+
+
+```{r}
+
+```
+
+
+```{r}
+library(reticulate)
+library(data.table)
+
+# Activate the Python environment where DGL and PyTorch are installed
+use_virtualenv("r_dgl_env123", required = TRUE)
+
+# Define Python code to execute the inductive training loop
+python_code <- "
+import os
+import pandas as pd
+from gcn_local.train_dgl_pytorch_entry_point_inductive import inductive_entry_train
+from sklearn.metrics import classification_report, roc_auc_score, matthews_corrcoef, balanced_accuracy_score
+
+# Create a directory for GCN results if it doesn't exist
+os.makedirs('gcn_results', exist_ok=True)
+
+# Inductive GCN Hyperparameters
+hyperparameters = {
+    'n-hidden': 32,
+    'n-layers': 2,
+    'dropout': 0.0,
+    'weight-decay': 5e-4,
+    'n-epochs': 100,
+    'lr': 0.01,
+    'aggregator-type': 'pool',
+    'target-column': 'binary_rating'
+}
+
+# Initialize DataFrame to store metrics for each loop
+gcn_results_ind_all = pd.DataFrame(columns=['F1 Score', 'ROC AUC', 'Accuracy', 'MCC', 'Balanced Accuracy', 'Precision', 'Recall'])
+
+# Run inductive training loop
+for j in range(10):
+    inductive_entry_train(
+        training_dir='gcn_processed_data',
+        model_dir='gcn_results',
+        output_dir='gcn_results',
+        features_train='features_train.csv',
+        features_test='features_test.csv',
+        target_column='binary_rating',
+        source_destination_node_index='src_dst_df.csv',
+        n_hidden=hyperparameters['n-hidden'],
+        n_layers=hyperparameters['n-layers'],
+        dropout=hyperparameters['dropout'],
+        weight_decay=hyperparameters['weight-decay'],
+        n_epochs=hyperparameters['n-epochs'],
+        lr=hyperparameters['lr'],
+        aggregator_type=hyperparameters['aggregator-type'],
+        predictions_file_name='predictions_ind.csv',
+        inductive=True
+    )
+    
+    # Read and evaluate predictions
+    gcn_output = pd.read_csv(os.path.join('gcn_results', 'predictions_ind.csv'))
+    y_true, gcn_y_pred, gcn_y_pred_prob_class_1 = gcn_output['target'], gcn_output['pred'], gcn_output['pred_proba_class_1']
+    metrics_gcn_results = classification_report(y_true, gcn_y_pred, zero_division=1, output_dict=True)
+
+    # Append metrics to results DataFrame
+    gcn_results = pd.DataFrame({
+        'F1 Score': metrics_gcn_results['1']['f1-score'],
+        'ROC AUC': roc_auc_score(y_true, gcn_y_pred_prob_class_1),
+        'Accuracy': metrics_gcn_results['accuracy'],
+        'MCC': matthews_corrcoef(y_true, gcn_y_pred),
+        'Balanced Accuracy': balanced_accuracy_score(y_true, gcn_y_pred),
+        'Precision': metrics_gcn_results['1']['precision'],
+        'Recall': metrics_gcn_results['1']['recall'],
+    }, index=['GCN Inductive'])
+
+    gcn_results_ind_all = pd.concat([gcn_results_ind_all, gcn_results])
+"
+# Execute the Python code from R
+py_run_string(python_code)
+
+```
+
+
+```{r}
+# Import the metrics from Python to R
+gcn_results_ind_all <- py$gcn_results_ind_all
+
+# Compute mean and standard deviation of each metric
+res_mean <- colMeans(gcn_results_ind_all, na.rm = TRUE)
+res_sd <- apply(gcn_results_ind_all, 2, sd, na.rm = TRUE)
+
+# Combine into a summary data frame
+res_summary <- data.frame(
+  Mean = res_mean,
+  SD = res_sd
+)
+
+print(res_summary)
+
+```
+
+```{r}
+# Assuming `gcn_results_ind_all` is your DataFrame
+rownames(gcn_results_ind_all) <- NULL  # This removes row names and resets the index
+
+# Display the DataFrame
+print(gcn_results_ind_all)
+
+```
+
+
+```{r}
+# Calculate mean and standard deviation for each column in `gcn_results_ind_all`
+res_mean <- colMeans(gcn_results_ind_all, na.rm = TRUE)
+res_sd <- apply(gcn_results_ind_all, 2, sd, na.rm = TRUE)
+
+# Combine mean and SD into a data frame
+res <- data.frame(
+  Mean = res_mean,
+  SD = res_sd
+)
+
+# Extract `ag_results` as a transposed data frame if it’s in the environment
+# Assuming `ag_results` is a data frame with calculated metrics from above
+ag_results_t <- t(ag_results)
+colnames(ag_results_t) <- "AutoGluon"
+
+# Combine `res` and `ag_results_t` side by side for comparison
+res <- cbind(res, ag_results_t)
+
+# Display the final combined results
+print(res)
+
+```
+
+
+
